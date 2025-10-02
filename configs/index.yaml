@@ -1,0 +1,63 @@
+# FAISS Index Configuration
+
+# Index Type
+index_type: "hnsw"  # hnsw, ivf_pq, flat
+
+# HNSW Parameters
+hnsw:
+  M: 32  # Number of bi-directional links per node (16-64)
+  efConstruction: 200  # Search depth during build (100-400)
+  efSearch: 64  # Search depth during query (32-128)
+  metric: "inner_product"  # inner_product, l2
+
+# IVF-PQ Parameters (alternative, for >50M vectors)
+ivf_pq:
+  nlist: 4096  # Number of clusters
+  nprobe: 32  # Number of clusters to search
+  m: 64  # Number of subquantizers
+  nbits: 8  # Bits per subquantizer
+  metric: "inner_product"
+
+# Flat Index (brute-force, for small datasets or recall probes)
+flat:
+  metric: "inner_product"
+
+# Embeddings
+embeddings:
+  model_path: "./artifacts/models/semantic-kd-student-v1/student.onnx"
+  batch_size: 256
+  device: "cpu"
+  normalize: true  # L2 normalization before indexing
+
+# Data
+data:
+  corpus_path: "./data/chunks/msmarco/corpus.parquet"
+  output_dir: "./artifacts/indexes"
+  chunk_size: 100000  # Process in chunks to avoid OOM
+
+# Index Files
+output:
+  index_file: "index.faiss"
+  ids_file: "ids.bin"
+  meta_file: "meta.parquet"
+  norms_file: "norms.bin"  # For MaxSim aggregation
+  version_file: "INDEX_VERSION"
+
+# Versioning
+versioning:
+  format: "%Y%m%d-%H%M"  # YYYYMMDD-HHMM
+  include_git_sha: true
+
+# Validation
+validation:
+  enabled: true
+  num_queries: 1000
+  recall_threshold: 0.97  # Fail if recall@10 < 0.97 vs brute-force
+  brute_force_top_k: 10
+
+# GCS Upload (optional)
+gcs:
+  enabled: false
+  bucket: "gs://your-bucket-indexes"
+  upload_after_build: true
+

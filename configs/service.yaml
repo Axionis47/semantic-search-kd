@@ -1,0 +1,126 @@
+# FastAPI Service Configuration
+
+# Service
+service:
+  name: "semantic-kd"
+  host: "0.0.0.0"
+  port: 8080
+  workers: 1  # Cloud Run uses 1 worker per instance
+  reload: false  # Set true for development
+  log_level: "info"
+
+# Models
+models:
+  student_onnx_path: "./artifacts/models/semantic-kd-student-v1/student_int8.onnx"
+  teacher_path: "BAAI/bge-reranker-large"  # Loaded on-demand for reranking
+  max_length: 512
+
+# Index
+index:
+  index_path: "./artifacts/indexes/20251020-1430_a3f2b1c/index.faiss"
+  ids_path: "./artifacts/indexes/20251020-1430_a3f2b1c/ids.bin"
+  meta_path: "./artifacts/indexes/20251020-1430_a3f2b1c/meta.parquet"
+  index_version: "20251020-1430_a3f2b1c"  # Set via env var INDEX_VERSION
+  load_on_startup: true
+
+# Search
+search:
+  default_top_k: 10
+  max_top_k: 100
+  ef_search: 64  # HNSW parameter (override index default)
+
+# Reranking
+rerank:
+  enabled: true
+  confidence_threshold: 0.6  # Rerank if max_score < threshold
+  importance_levels:
+    low: false  # Don't rerank low-importance queries
+    high: true  # Always rerank high-importance queries
+  timeout_ms: 5000  # Circuit breaker timeout
+  batch_size: 10
+  device: "cpu"  # or "cuda" if GPU available
+
+# Hybrid Retrieval (optional)
+hybrid:
+  enabled: false  # Feature flag
+  bm25_index_path: "./artifacts/indexes/bm25"
+  bm25_weight: 0.3
+  semantic_weight: 0.7
+  fusion_method: "rrf"  # rrf (reciprocal rank fusion), linear
+
+# Rate Limiting
+rate_limit:
+  enabled: true
+  requests_per_minute: 100
+  burst: 20
+
+# Authentication
+auth:
+  enabled: false  # Set true for production
+  api_key_header: "X-API-Key"
+  api_keys_file: "./secrets/api_keys.txt"  # One key per line
+
+# CORS
+cors:
+  enabled: true
+  allow_origins: ["*"]
+  allow_methods: ["GET", "POST"]
+  allow_headers: ["*"]
+
+# Monitoring
+monitoring:
+  prometheus:
+    enabled: true
+    port: 9090
+    path: "/metrics"
+  
+  opentelemetry:
+    enabled: true
+    exporter: "otlp"
+    endpoint: "http://localhost:4317"
+    service_name: "semantic-kd"
+  
+  logging:
+    log_queries: false  # Don't log raw query text (privacy)
+    log_query_hashes: true  # Log hashed query IDs
+    log_doc_ids: true
+    log_latencies: true
+
+# Health Checks
+health:
+  readiness_check: true
+  liveness_check: true
+  startup_probe_delay: 10  # seconds
+
+# Caching (optional)
+cache:
+  enabled: false
+  backend: "redis"  # redis, memcached, in-memory
+  redis_url: "redis://localhost:6379"
+  ttl_seconds: 3600
+  max_size: 10000  # For in-memory cache
+
+# Feature Flags
+features:
+  enable_rerank: true
+  enable_hybrid: false
+  enable_query_expansion: false
+  enable_late_interaction: false
+
+# GCP (Cloud Run)
+gcp:
+  project_id: "${GCP_PROJECT_ID}"
+  region: "us-central1"
+  service_account: "${SERVICE_ACCOUNT}"
+  
+  # Cloud Run specific
+  memory: "32Gi"
+  cpu: "8"
+  max_instances: 100
+  min_instances: 0
+  concurrency: 80
+  timeout: 300  # seconds
+
+# Environment
+environment: "production"  # development, staging, production
+

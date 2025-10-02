@@ -1,0 +1,24 @@
+displayName: semantic-kd-training
+jobSpec:
+  workerPoolSpecs:
+    - machineSpec:
+        machineType: g2-standard-4  # L4 GPU machine
+        acceleratorType: NVIDIA_L4
+        acceleratorCount: 1
+      replicaCount: 1
+      containerSpec:
+        imageUri: us-central1-docker.pkg.dev/plotpointe/semantic-kd/train:latest
+        args:
+          - --max-samples=50000
+          - --epochs=3
+          - --batch-size=32
+          - --stage=3
+          - --device=cuda
+          - --log-level=INFO
+          - --output-dir=/gcs/plotpointe-semantic-kd-models/kd_student
+      diskSpec:
+        bootDiskType: pd-ssd
+        bootDiskSizeGb: 100
+  baseOutputDirectory:
+    outputUriPrefix: gs://plotpointe-semantic-kd-models/training_outputs
+

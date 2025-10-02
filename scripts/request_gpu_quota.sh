@@ -1,0 +1,40 @@
+#!/bin/bash
+set -e
+
+echo "=========================================="
+echo "Request GPU Quota on GCP"
+echo "=========================================="
+echo ""
+
+PROJECT_ID="plotpointe"
+
+echo "Current GPU quota:"
+gcloud compute project-info describe --project=${PROJECT_ID} --format="yaml(quotas)" | grep -A 2 "GPUS_ALL_REGIONS"
+
+echo ""
+echo "To request GPU quota increase:"
+echo ""
+echo "1. Go to: https://console.cloud.google.com/iam-admin/quotas?project=${PROJECT_ID}"
+echo "2. Filter by 'GPUs (all regions)'"
+echo "3. Select the quota"
+echo "4. Click 'EDIT QUOTAS'"
+echo "5. Request new limit: 1 (for T4) or 1 (for L4)"
+echo "6. Provide justification: 'Training semantic search model with knowledge distillation'"
+echo ""
+echo "Quota increase typically takes 1-2 business days."
+echo ""
+echo "=========================================="
+echo "Alternative: Use Google Colab"
+echo "=========================================="
+echo ""
+echo "While waiting for quota approval, you can use Google Colab:"
+echo ""
+echo "1. Go to: https://colab.research.google.com/"
+echo "2. Create a new notebook"
+echo "3. Change runtime to GPU (Runtime > Change runtime type > GPU)"
+echo "4. Upload the training script and data"
+echo "5. Run training"
+echo ""
+echo "Colab provides free T4 GPU access (limited hours per day)"
+echo ""
+

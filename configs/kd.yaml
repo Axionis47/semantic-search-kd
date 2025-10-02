@@ -1,0 +1,142 @@
+# Knowledge Distillation Training Configuration
+
+# Teacher Model
+teacher:
+  model_name: "BAAI/bge-reranker-large"
+  # Alternative: "castorini/monot5-base-msmarco"
+  max_length: 512
+  batch_size: 32
+  device: "cuda"  # or "cpu" for mining
+  cache_dir: "./artifacts/models/teacher"
+
+# Student Model
+student:
+  model_name: "intfloat/e5-small-v2"
+  # Alternative: "thenlper/gte-small"
+  embedding_dim: 384
+  max_length: 512
+  pooling: "mean"  # mean, max, cls
+  normalize: true  # L2 normalization
+  cache_dir: "./artifacts/models/student"
+
+# Training
+training:
+  output_dir: "./artifacts/models/semantic-kd-student-v1"
+  num_epochs: 3
+  batch_size: 32
+  gradient_accumulation_steps: 2
+  learning_rate: 2.0e-5
+  warmup_steps: 1000
+  weight_decay: 0.01
+  max_grad_norm: 1.0
+  fp16: true
+  dataloader_num_workers: 4
+  
+  # Evaluation
+  eval_steps: 500
+  save_steps: 1000
+  logging_steps: 100
+  eval_batch_size: 64
+  
+  # Early Stopping
+  early_stopping_patience: 2
+  early_stopping_metric: "ndcg@10"
+  early_stopping_mode: "max"
+  
+  # Checkpointing
+  save_total_limit: 3
+  load_best_model_at_end: true
+
+# Knowledge Distillation
+kd:
+  # Loss weights
+  loss_weights:
+    contrastive: 0.2
+    margin_mse: 0.6
+    listwise_kd: 0.2
+  
+  # Temperature schedule (linear annealing)
+  temperature_start: 4.0
+  temperature_end: 2.0
+  temperature_schedule: "linear"  # linear, cosine, constant
+  
+  # Confidence-based distillation
+  confidence_threshold: 0.6  # Only distill if teacher max_prob >= threshold
+  
+  # Alpha schedule (KD weight vs task loss)
+  alpha_start: 0.8
+  alpha_end: 0.5
+  alpha_schedule: "linear"
+
+# Mining Curriculum
+mining:
+  # Stage A: Warmup (in-batch negatives)
+  stage_a:
+    enabled: true
+    num_epochs: 1
+    negatives_per_query: 7  # in-batch
+    strategy: "in_batch"
+  
+  # Stage B: Teacher-mined negatives
+  stage_b:
+    enabled: true
+    num_epochs: 1
+    negatives_per_query: 4
+    strategy: "teacher"
+    teacher_top_k: 100  # Score top-100 BM25 candidates
+    teacher_select_k: 20  # Select top-20 hard negatives
+    denoising:
+      teacher_score_threshold: 0.7  # Drop if score >= 0.7 (likely relevant)
+      text_overlap_threshold: 0.8  # Drop if overlap > 0.8
+  
+  # Stage C: ANCE (iterative mining)
+  stage_c:
+    enabled: true
+    num_epochs: 1
+    negatives_per_query: 4
+    strategy: "ance"
+    ance_top_k: 50
+    ance_select_k: 10
+    ance_refresh_every_n_steps: 500  # Re-mine with updated student
+    denoising:
+      teacher_score_threshold: 0.7
+      text_overlap_threshold: 0.8
+
+# BM25 Mining
+bm25:
+  index_path: "./artifacts/indexes/bm25"
+  top_k: 100
+  remove_positives: true
+
+# Data
+data:
+  train_path: "./data/chunks/msmarco/train.parquet"
+  dev_path: "./data/chunks/msmarco/dev.parquet"
+  test_path: "./data/chunks/msmarco/test.parquet"
+  max_train_samples: null  # null = use all
+  max_dev_samples: 10000
+  shuffle_train: true
+  seed: 42
+
+# Calibration Set (for ONNX quantization)
+calibration:
+  num_samples: 50000
+  output_path: "./data/calibration_set.parquet"
+
+# Logging
+logging:
+  log_level: "INFO"
+  log_file: "./logs/kd_training.log"
+  wandb:
+    enabled: false
+    project: "semantic-kd"
+    entity: null
+  mlflow:
+    enabled: false
+    tracking_uri: "./mlruns"
+    experiment_name: "semantic-kd"
+
+# Reproducibility
+seed: 42
+deterministic: true
+

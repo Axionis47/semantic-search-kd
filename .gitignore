@@ -1,0 +1,121 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+venv/
+ENV/
+env/
+.venv
+
+# Poetry
+poetry.lock
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.hypothesis/
+.mypy_cache/
+.ruff_cache/
+
+# Jupyter
+.ipynb_checkpoints
+*.ipynb_checkpoints/
+
+# Data
+data/raw/
+data/chunks/
+data/manifests/
+data/splits/
+*.parquet
+*.jsonl
+*.arrow
+
+# Models & Artifacts
+artifacts/
+models/
+*.onnx
+*.pt
+*.pth
+*.bin
+*.safetensors
+
+# Indexes
+*.faiss
+*.index
+ids.bin
+norms.bin
+meta.parquet
+
+# Pyserini/Lucene
+indexes/
+index/
+
+# Logs
+*.log
+logs/
+.tmp/
+
+# Context management docs (internal use only)
+*_STATUS.md
+*_SUMMARY.md
+*_REPORT.md
+*_PLAN.md
+*_LOG.md
+*_CONFIRMATION.md
+*_GUIDE.md
+*_OPTIONS.md
+*_ESTIMATE.md
+RUNS.md
+TRAINING_LOGIC_ANALYSIS.md
+
+# Environment
+.env
+.env.local
+*.env
+
+# Terraform
+infra/terraform/.terraform/
+infra/terraform/*.tfstate
+infra/terraform/*.tfstate.backup
+infra/terraform/.terraform.lock.hcl
+
+# Cloud
+.gcloud/
+.config/gcloud/
+
+# MkDocs
+site/
+
+# Temporary
+*.tmp
+.cache/
