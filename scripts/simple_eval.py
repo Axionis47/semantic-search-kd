@@ -59,14 +59,22 @@ def main():
     args = parser.parse_args()
     
     setup_logging(log_level="INFO")
-    
+
+    # Validate arguments
+    from scripts._validate_args import validate_path_exists, validate_positive_int, validate_device
+    validate_path_exists(args.model_path, "--model-path")
+    validate_path_exists(args.data_path, "--data-path")
+    validate_positive_int(args.max_samples, "--max-samples")
+    validate_device(args.device)
+
     # Load data from MS MARCO JSONL
     logger.info(f"Loading data from {args.data_path}")
 
     queries = []
     corpus = []
-    relevance_labels = []
     corpus_dict = {}  # text -> index mapping
+    # First pass: collect all unique passages into corpus, record per-query relevance
+    query_passage_relevance = []  # list of dict{passage_text -> relevance_score}
 
     with open(args.data_path, "r") as f:
         for i, line in enumerate(f):
@@ -84,31 +92,26 @@ def main():
 
             queries.append(query_text)
 
-            # Build corpus and labels for this query
-            query_labels = [0] * len(corpus)  # Start with all zeros
-
+            # Record relevance per passage for this query
+            q_relevance = {}
             for passage_text, selected in zip(passage_texts, is_selected):
                 # Add to corpus if not already there
                 if passage_text not in corpus_dict:
                     corpus_dict[passage_text] = len(corpus)
                     corpus.append(passage_text)
-                    query_labels.append(0)  # Extend labels for new doc
+                # Record relevance (last wins if duplicate passages)
+                q_relevance[passage_text] = selected
 
-                # Mark as relevant if selected
-                doc_idx = corpus_dict[passage_text]
-                if doc_idx < len(query_labels):
-                    query_labels[doc_idx] = selected
-                else:
-                    # Extend labels if needed
-                    while len(query_labels) <= doc_idx:
-                        query_labels.append(0)
-                    query_labels[doc_idx] = selected
+            query_passage_relevance.append(q_relevance)
 
-            # Ensure labels match corpus size
-            while len(query_labels) < len(corpus):
-                query_labels.append(0)
-
-            relevance_labels.append(query_labels)
+    # Second pass: build label arrays now that corpus is fully built
+    relevance_labels = []
+    corpus_size = len(corpus)
+    for q_relevance in query_passage_relevance:
+        query_labels = [0] * corpus_size
+        for passage_text, score in q_relevance.items():
+            query_labels[corpus_dict[passage_text]] = score
+        relevance_labels.append(query_labels)
 
     logger.info(f"Loaded {len(queries)} queries, {len(corpus)} documents")
     

@@ -1,9 +1,9 @@
 """BM25 index building and querying using rank-bm25."""
 
+import hashlib
 import json
-import pickle
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import List, Tuple
 
 import pandas as pd
 from loguru import logger
@@ -27,7 +27,7 @@ class BM25Index:
         self.doc_ids = []
         self.tokenized_corpus = []
 
-        if auto_load and self.index_path and (self.index_path / "bm25.pkl").exists():
+        if auto_load and self.index_path and (self.index_path / "tokenized_corpus.json").exists():
             self.load()
 
     def _tokenize(self, text: str) -> List[str]:
@@ -77,44 +77,85 @@ class BM25Index:
         logger.info(f"BM25 index built successfully at {output_dir}")
 
     def save(self) -> None:
-        """Save BM25 index to disk."""
+        """Save BM25 index to disk using JSON (no pickle for security)."""
         if not self.index_path:
             raise ValueError("index_path not set")
 
         self.index_path.mkdir(parents=True, exist_ok=True)
 
-        # Save BM25 model
-        with open(self.index_path / "bm25.pkl", "wb") as f:
-            pickle.dump(self.bm25, f)
-
         # Save doc IDs
         with open(self.index_path / "doc_ids.json", "w") as f:
             json.dump(self.doc_ids, f)
 
-        # Save tokenized corpus
-        with open(self.index_path / "tokenized_corpus.pkl", "wb") as f:
-            pickle.dump(self.tokenized_corpus, f)
+        # Save tokenized corpus as JSON (list of token lists)
+        with open(self.index_path / "tokenized_corpus.json", "w") as f:
+            json.dump(self.tokenized_corpus, f)
+
+        # Save BM25 parameters needed to reconstruct the index
+        bm25_params = {
+            "k1": getattr(self.bm25, "k1", 1.5),
+            "b": getattr(self.bm25, "b", 0.75),
+            "epsilon": getattr(self.bm25, "epsilon", 0.25),
+            "corpus_size": len(self.tokenized_corpus),
+        }
+        with open(self.index_path / "bm25_params.json", "w") as f:
+            json.dump(bm25_params, f)
+
+        # Write checksum for integrity verification
+        checksum = self._compute_checksum()
+        with open(self.index_path / "checksum.json", "w") as f:
+            json.dump({"sha256": checksum}, f)
 
         logger.info(f"Saved BM25 index to {self.index_path}")
 
+    def _compute_checksum(self) -> str:
+        """Compute SHA256 checksum of index data for integrity verification."""
+        h = hashlib.sha256()
+        h.update(json.dumps(self.doc_ids, sort_keys=True).encode())
+        h.update(json.dumps(self.tokenized_corpus, sort_keys=True).encode())
+        return h.hexdigest()
+
     def load(self) -> None:
-        """Load existing BM25 index."""
+        """Load existing BM25 index from JSON files (safe deserialization)."""
         if not self.index_path or not self.index_path.exists():
             raise FileNotFoundError(f"Index not found: {self.index_path}")
 
         logger.info(f"Loading BM25 index from {self.index_path}")
 
-        # Load BM25 model
-        with open(self.index_path / "bm25.pkl", "rb") as f:
-            self.bm25 = pickle.load(f)
-
         # Load doc IDs
         with open(self.index_path / "doc_ids.json", "r") as f:
             self.doc_ids = json.load(f)
 
-        # Load tokenized corpus
-        with open(self.index_path / "tokenized_corpus.pkl", "rb") as f:
-            self.tokenized_corpus = pickle.load(f)
+        # Load tokenized corpus from JSON
+        corpus_json = self.index_path / "tokenized_corpus.json"
+        if corpus_json.exists():
+            try:
+                with open(corpus_json, "r") as f:
+                    self.tokenized_corpus = json.load(f)
+            except json.JSONDecodeError as e:
+                raise ValueError(
+                    f"Checksum/integrity failure: tokenized_corpus.json is corrupted — {e}"
+                ) from e
+        else:
+            raise FileNotFoundError(
+                f"tokenized_corpus.json not found at {self.index_path}. "
+                "If you have a legacy .pkl index, rebuild it with build_from_parquet()."
+            )
+
+        # Verify integrity if checksum exists
+        checksum_file = self.index_path / "checksum.json"
+        if checksum_file.exists():
+            with open(checksum_file, "r") as f:
+                expected = json.load(f)["sha256"]
+            actual = self._compute_checksum()
+            if actual != expected:
+                raise ValueError(
+                    f"Index integrity check failed: checksum mismatch. "
+                    f"Expected {expected[:12]}..., got {actual[:12]}..."
+                )
+
+        # Reconstruct BM25 index from tokenized corpus
+        self.bm25 = BM25Okapi(self.tokenized_corpus)
 
         logger.info(f"Loaded index with {len(self.doc_ids)} documents")
 
@@ -165,7 +206,7 @@ class BM25Index:
         Returns:
             List of result lists (one per query)
         """
-        if self.searcher is None:
+        if self.bm25 is None:
             raise ValueError("Index not loaded. Call load() first.")
 
         all_results = []

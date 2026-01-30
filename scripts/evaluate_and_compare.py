@@ -253,7 +253,14 @@ def main():
     
     # Setup logging
     setup_logging(level=args.log_level)
-    
+
+    # Validate arguments
+    from scripts._validate_args import validate_path_exists, validate_positive_int, validate_device
+    validate_path_exists(str(args.kd_model), "--kd-model")
+    validate_path_exists(str(args.data_dir), "--data-dir")
+    validate_positive_int(args.max_samples, "--max-samples")
+    validate_device(args.device)
+
     logger.info("=" * 80)
     logger.info("Knowledge Distillation Evaluation & Comparison")
     logger.info("=" * 80)

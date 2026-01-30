@@ -1,0 +1,540 @@
+# =============================================================================
+# ML CI/CD Pipeline for Semantic Search with Knowledge Distillation
+# =============================================================================
+#
+# This pipeline implements MLOps best practices:
+# 1. Code Quality - Lint, type check, security scan
+# 2. Model Validation - Verify model loads and produces valid embeddings
+# 3. Model Quality Gates - Check inference metrics meet thresholds
+# 4. Integration Tests - API endpoint tests with model
+# 5. Model Registry - Version and track model artifacts
+# 6. Deployment - Automated staging/production deployment
+#
+# =============================================================================
+
+name: ML Pipeline
+
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - 'scripts/**'
+      - 'configs/**'
+      - 'pyproject.toml'
+      - '.github/workflows/ml-pipeline.yml'
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      deploy_environment:
+        description: 'Deployment environment'
+        required: false
+        default: 'staging'
+        type: choice
+        options:
+          - staging
+          - production
+
+env:
+  PYTHON_VERSION: '3.10'
+  POETRY_VERSION: '1.7.0'
+  MODEL_ARTIFACT_PATH: 'artifacts/models/kd_student_production'
+  GCS_MODEL_BUCKET: 'gs://plotpointe-semantic-kd-models'
+  GCS_MODEL_REGISTRY: 'gs://plotpointe-semantic-kd-models/registry/semantic-kd-student-v1'
+
+jobs:
+  # ===========================================================================
+  # Stage 1: Code Quality
+  # ===========================================================================
+  code-quality:
+    name: Code Quality
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install Poetry
+        uses: snok/install-poetry@v1
+        with:
+          version: ${{ env.POETRY_VERSION }}
+          virtualenvs-create: true
+          virtualenvs-in-project: true
+
+      - name: Load cached venv
+        id: cached-poetry-dependencies
+        uses: actions/cache@v4
+        with:
+          path: .venv
+          key: venv-${{ runner.os }}-${{ env.PYTHON_VERSION }}-${{ hashFiles('**/poetry.lock') }}
+
+      - name: Install dependencies
+        if: steps.cached-poetry-dependencies.outputs.cache-hit != 'true'
+        run: poetry install --no-interaction --no-root
+
+      - name: Install project
+        run: poetry install --no-interaction
+
+      - name: Lint with Ruff
+        run: |
+          poetry run ruff check src/ tests/ scripts/
+          poetry run ruff format --check src/ tests/ scripts/
+
+      - name: Type check with MyPy
+        run: poetry run mypy src/ --ignore-missing-imports
+
+      - name: Security scan with Bandit
+        run: poetry run bandit -r src/ -ll
+
+  # ===========================================================================
+  # Stage 2: Unit Tests
+  # ===========================================================================
+  unit-tests:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    needs: code-quality
+    strategy:
+      matrix:
+        python-version: ['3.10', '3.11']
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install Poetry
+        uses: snok/install-poetry@v1
+        with:
+          version: ${{ env.POETRY_VERSION }}
+          virtualenvs-create: true
+          virtualenvs-in-project: true
+
+      - name: Load cached venv
+        uses: actions/cache@v4
+        with:
+          path: .venv
+          key: venv-${{ runner.os }}-${{ matrix.python-version }}-${{ hashFiles('**/poetry.lock') }}
+
+      - name: Install dependencies
+        run: poetry install --no-interaction
+
+      - name: Run unit tests
+        run: |
+          poetry run pytest tests/ -v \
+            --ignore=tests/test_model_validation.py \
+            --cov=src \
+            --cov-report=xml \
+            --cov-report=term-missing
+
+      - name: Upload coverage
+        uses: codecov/codecov-action@v4
+        with:
+          files: ./coverage.xml
+          fail_ci_if_error: false
+
+  # ===========================================================================
+  # Stage 3: Model Validation
+  # ===========================================================================
+  model-validation:
+    name: Model Validation
+    runs-on: ubuntu-latest
+    needs: unit-tests
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install Poetry
+        uses: snok/install-poetry@v1
+        with:
+          version: ${{ env.POETRY_VERSION }}
+
+      - name: Install dependencies
+        run: poetry install --no-interaction
+
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Resolve latest model path from registry
+        id: model-path
+        run: |
+          gsutil cp ${{ env.GCS_MODEL_REGISTRY }}/latest.json /tmp/latest_model.json
+          MODEL_PATH=$(python3 -c "import json; print(json.load(open('/tmp/latest_model.json'))['model_path'])" 2>/dev/null || echo "")
+          if [ -z "$MODEL_PATH" ]; then
+            echo "Warning: Could not resolve from registry, using default path"
+            MODEL_PATH="${{ env.GCS_MODEL_BUCKET }}/kd_student_production_cpu_20251020_012956/best_model"
+          fi
+          echo "model_gcs_path=${MODEL_PATH}" >> $GITHUB_OUTPUT
+          echo "Resolved model path: ${MODEL_PATH}"
+
+      - name: Download model from GCS
+        run: |
+          mkdir -p ${{ env.MODEL_ARTIFACT_PATH }}
+          gsutil -m cp -r ${{ steps.model-path.outputs.model_gcs_path }}/* ${{ env.MODEL_ARTIFACT_PATH }}/
+
+      - name: Validate model loads correctly
+        run: |
+          poetry run python -c "
+          from sentence_transformers import SentenceTransformer
+          import numpy as np
+
+          print('Loading model...')
+          model = SentenceTransformer('${{ env.MODEL_ARTIFACT_PATH }}')
+
+          print('Model loaded successfully!')
+          print(f'  Embedding dim: {model.get_sentence_embedding_dimension()}')
+
+          # Test encoding
+          test_texts = ['test query', 'test document']
+          embeddings = model.encode(test_texts)
+
+          print(f'  Embeddings shape: {embeddings.shape}')
+          assert embeddings.shape == (2, 384), f'Expected (2, 384), got {embeddings.shape}'
+
+          # Check embeddings are normalized
+          norms = np.linalg.norm(embeddings, axis=1)
+          assert np.allclose(norms, 1.0, atol=0.01), 'Embeddings not normalized'
+
+          print('Model validation passed!')
+          "
+
+      - name: Run model quality tests
+        run: |
+          poetry run pytest tests/test_model_validation.py -v --tb=short
+
+      - name: Check model size
+        run: |
+          MODEL_SIZE=$(du -sm ${{ env.MODEL_ARTIFACT_PATH }} | cut -f1)
+          echo "Model size: ${MODEL_SIZE} MB"
+          if [ "$MODEL_SIZE" -gt 200 ]; then
+            echo "Warning: Model size exceeds 200MB threshold"
+          fi
+
+  # ===========================================================================
+  # Stage 4: Integration Tests
+  # ===========================================================================
+  integration-tests:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    needs: model-validation
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install Poetry
+        uses: snok/install-poetry@v1
+        with:
+          version: ${{ env.POETRY_VERSION }}
+
+      - name: Install dependencies
+        run: poetry install --no-interaction
+
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Resolve latest model path from registry
+        id: model-path
+        run: |
+          gsutil cp ${{ env.GCS_MODEL_REGISTRY }}/latest.json /tmp/latest_model.json
+          MODEL_PATH=$(python3 -c "import json; print(json.load(open('/tmp/latest_model.json'))['model_path'])" 2>/dev/null || echo "")
+          if [ -z "$MODEL_PATH" ]; then
+            MODEL_PATH="${{ env.GCS_MODEL_BUCKET }}/kd_student_production_cpu_20251020_012956/best_model"
+          fi
+          echo "model_gcs_path=${MODEL_PATH}" >> $GITHUB_OUTPUT
+
+      - name: Download model from GCS
+        run: |
+          mkdir -p ${{ env.MODEL_ARTIFACT_PATH }}
+          gsutil -m cp -r ${{ steps.model-path.outputs.model_gcs_path }}/* ${{ env.MODEL_ARTIFACT_PATH }}/
+
+      - name: Start service in background
+        run: |
+          poetry run uvicorn src.serve.app:app --host 0.0.0.0 --port 8080 &
+          sleep 30  # Wait for model to load
+
+      - name: Test health endpoint
+        run: |
+          curl -f http://localhost:8080/health || exit 1
+
+      - name: Test encode endpoint
+        run: |
+          RESPONSE=$(curl -s -X POST http://localhost:8080/encode \
+            -H "Content-Type: application/json" \
+            -d '{"texts": ["test query", "test document"]}')
+
+          echo "Response: $RESPONSE"
+
+          # Validate response
+          python -c "
+          import json
+          response = json.loads('$RESPONSE')
+          assert 'embeddings' in response, 'Missing embeddings'
+          assert len(response['embeddings']) == 2, 'Expected 2 embeddings'
+          assert response['dimension'] == 384, f'Expected dim 384, got {response[\"dimension\"]}'
+          print('Encode endpoint test passed!')
+          "
+
+      - name: Test inference latency
+        run: |
+          poetry run python -c "
+          import requests
+          import time
+          import statistics
+
+          url = 'http://localhost:8080/encode'
+          data = {'texts': ['What is machine learning?']}
+
+          latencies = []
+          for _ in range(10):
+              start = time.time()
+              response = requests.post(url, json=data)
+              latency = (time.time() - start) * 1000
+              latencies.append(latency)
+
+          avg_latency = statistics.mean(latencies)
+          p95_latency = sorted(latencies)[int(len(latencies) * 0.95)]
+
+          print(f'Average latency: {avg_latency:.2f} ms')
+          print(f'P95 latency: {p95_latency:.2f} ms')
+
+          # Quality gate: P95 latency should be under 100ms
+          assert p95_latency < 100, f'P95 latency {p95_latency}ms exceeds 100ms threshold'
+          print('Latency test passed!')
+          "
+
+  # ===========================================================================
+  # Stage 5: Build Docker Image
+  # ===========================================================================
+  build-image:
+    name: Build Docker Image
+    runs-on: ubuntu-latest
+    needs: integration-tests
+    if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+    outputs:
+      image_tag: ${{ steps.meta.outputs.tags }}
+      image_digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GCR
+        uses: docker/login-action@v3
+        with:
+          registry: gcr.io
+          username: _json_key
+          password: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: gcr.io/plotpointe/semantic-kd
+          tags: |
+            type=sha,prefix=
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+
+      - name: Build and push
+        id: build
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            MODEL_PATH=${{ env.MODEL_ARTIFACT_PATH }}
+
+      - name: Generate SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ steps.meta.outputs.tags }}
+          output-file: sbom.json
+
+      - name: Upload SBOM
+        uses: actions/upload-artifact@v3
+        with:
+          name: sbom
+          path: sbom.json
+
+  # ===========================================================================
+  # Stage 6: Deploy to Staging
+  # ===========================================================================
+  deploy-staging:
+    name: Deploy to Staging
+    runs-on: ubuntu-latest
+    needs: build-image
+    if: github.ref == 'refs/heads/main' || (github.event_name == 'workflow_dispatch' && github.event.inputs.deploy_environment == 'staging')
+    environment:
+      name: staging
+      url: https://semantic-kd-staging.plotpointe.com
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Deploy to Cloud Run (Staging)
+        run: |
+          gcloud run deploy semantic-kd-staging \
+            --image ${{ needs.build-image.outputs.image_tag }} \
+            --region us-central1 \
+            --platform managed \
+            --memory 2Gi \
+            --cpu 2 \
+            --timeout 60 \
+            --concurrency 100 \
+            --min-instances 0 \
+            --max-instances 5 \
+            --set-env-vars "SEMANTIC_KD_ENVIRONMENT=staging" \
+            --allow-unauthenticated
+
+      - name: Run smoke tests
+        run: |
+          SERVICE_URL=$(gcloud run services describe semantic-kd-staging --region us-central1 --format 'value(status.url)')
+
+          # Health check
+          curl -f "${SERVICE_URL}/health" || exit 1
+
+          # Encode test
+          curl -f -X POST "${SERVICE_URL}/encode" \
+            -H "Content-Type: application/json" \
+            -d '{"texts": ["smoke test"]}' || exit 1
+
+          echo "Staging deployment verified!"
+
+  # ===========================================================================
+  # Stage 7: Deploy to Production (Manual Approval)
+  # ===========================================================================
+  deploy-production:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    needs: [build-image, deploy-staging]
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.deploy_environment == 'production'
+    environment:
+      name: production
+      url: https://semantic-kd.plotpointe.com
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Deploy to Cloud Run (Production)
+        run: |
+          gcloud run deploy semantic-kd \
+            --image ${{ needs.build-image.outputs.image_tag }} \
+            --region us-central1 \
+            --platform managed \
+            --memory 4Gi \
+            --cpu 4 \
+            --timeout 60 \
+            --concurrency 200 \
+            --min-instances 1 \
+            --max-instances 20 \
+            --set-env-vars "SEMANTIC_KD_ENVIRONMENT=production,SEMANTIC_KD_SERVICE__AUTH__ENABLED=true" \
+            --no-allow-unauthenticated
+
+      - name: Notify deployment
+        run: |
+          echo "Production deployment completed!"
+          echo "Image: ${{ needs.build-image.outputs.image_tag }}"
+          echo "Digest: ${{ needs.build-image.outputs.image_digest }}"
+
+  # ===========================================================================
+  # Stage 8: Model Registry Update
+  # ===========================================================================
+  update-model-registry:
+    name: Update Model Registry
+    runs-on: ubuntu-latest
+    needs: [model-validation, deploy-staging]
+    if: github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Update model registry
+        run: |
+          # Create model card
+          cat > model_card.json << EOF
+          {
+            "model_name": "semantic-kd-student-v1",
+            "model_type": "bi-encoder",
+            "base_model": "intfloat/e5-small-v2",
+            "teacher_model": "BAAI/bge-reranker-large",
+            "version": "$(git rev-parse --short HEAD)",
+            "training_date": "2025-10-20",
+            "metrics": {
+              "ndcg@1": 0.525,
+              "ndcg@10": 0.543,
+              "mrr@10": 0.543,
+              "model_size_mb": 127,
+              "inference_latency_ms": 5
+            },
+            "training_config": {
+              "epochs": 3,
+              "batch_size": 8,
+              "mining_stage": 2,
+              "losses": ["margin_mse", "listwise_kd", "contrastive"]
+            },
+            "deployed_to": ["staging"],
+            "commit": "$(git rev-parse HEAD)",
+            "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          }
+          EOF
+
+          # Upload to GCS registry
+          gsutil cp model_card.json ${{ env.GCS_MODEL_BUCKET }}/registry/semantic-kd-student-v1/$(git rev-parse --short HEAD).json
+          gsutil cp model_card.json ${{ env.GCS_MODEL_BUCKET }}/registry/semantic-kd-student-v1/latest.json
+
+          echo "Model registry updated!"

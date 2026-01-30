@@ -7,7 +7,7 @@ teacher:
   max_length: 512
   batch_size: 32
   device: "cuda"  # or "cpu" for mining
-  cache_dir: "./artifacts/models/teacher"
+  cache_dir: "./artifacts/models/teacher"  # In Docker: /app/artifacts/models/teacher
 
 # Student Model
 student:
@@ -17,11 +17,11 @@ student:
   max_length: 512
   pooling: "mean"  # mean, max, cls
   normalize: true  # L2 normalization
-  cache_dir: "./artifacts/models/student"
+  cache_dir: "./artifacts/models/student"  # In Docker: /app/artifacts/models/student
 
 # Training
 training:
-  output_dir: "./artifacts/models/semantic-kd-student-v1"
+  output_dir: "./artifacts/models/semantic-kd-student-v1"  # In Docker: /app/artifacts/models/...
   num_epochs: 3
   batch_size: 32
   gradient_accumulation_steps: 2

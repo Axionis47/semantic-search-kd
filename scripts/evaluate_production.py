@@ -127,7 +127,14 @@ def main():
     args = parser.parse_args()
     
     setup_logging(log_level="INFO")
-    
+
+    # Validate arguments
+    from scripts._validate_args import validate_path_exists, validate_positive_int, validate_device
+    validate_path_exists(args.kd_model_path, "--kd-model-path")
+    validate_path_exists(args.data_path, "--data-path")
+    validate_positive_int(args.max_samples, "--max-samples")
+    validate_device(args.device)
+
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     

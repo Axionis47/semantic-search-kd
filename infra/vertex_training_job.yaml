@@ -7,7 +7,9 @@ jobSpec:
         acceleratorCount: 1
       replicaCount: 1
       containerSpec:
-        imageUri: us-central1-docker.pkg.dev/plotpointe/semantic-kd/train:latest
+        # Pin image to specific tag or digest for reproducibility.
+        # Update this when deploying a new training image.
+        imageUri: us-central1-docker.pkg.dev/plotpointe/semantic-kd/train:v1.0.0
         args:
           - --max-samples=50000
           - --epochs=3

@@ -378,3 +378,213 @@ gcloud run deploy semantic-kd \
 | PyTorch serving | Simpler than ONNX, fast enough for our latency requirements |
 | E5 student | Good balance of size (33M) and quality, built-in query/passage prefixes |
 | BGE teacher | State-of-the-art reranker, well-calibrated scores |
+
+---
+
+## Production Architecture
+
+### Security
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                     FastAPI Application                      │
+├─────────────────────────────────────────────────────────────┤
+│                                                              │
+│  Middleware Stack (applied in order):                        │
+│  ┌─────────────────────────────────────────────────────┐    │
+│  │ 1. Security Headers                                  │    │
+│  │    - X-Content-Type-Options: nosniff                │    │
+│  │    - X-Frame-Options: DENY                          │    │
+│  │    - Strict-Transport-Security                      │    │
+│  └─────────────────────────────────────────────────────┘    │
+│                          ↓                                   │
+│  ┌─────────────────────────────────────────────────────┐    │
+│  │ 2. Request Logging                                   │    │
+│  │    - Privacy-preserving query hashing               │    │
+│  │    - Latency tracking                               │    │
+│  └─────────────────────────────────────────────────────┘    │
+│                          ↓                                   │
+│  ┌─────────────────────────────────────────────────────┐    │
+│  │ 3. Rate Limiting (Token Bucket)                     │    │
+│  │    - 100 requests/minute per client                 │    │
+│  │    - Burst: 20 requests                             │    │
+│  └─────────────────────────────────────────────────────┘    │
+│                          ↓                                   │
+│  ┌─────────────────────────────────────────────────────┐    │
+│  │ 4. API Key Authentication                           │    │
+│  │    - X-API-Key header                               │    │
+│  │    - Keys stored as SHA-256 hashes                  │    │
+│  └─────────────────────────────────────────────────────┘    │
+│                          ↓                                   │
+│  ┌─────────────────────────────────────────────────────┐    │
+│  │ 5. CORS (Configurable Origins)                      │    │
+│  │    - Production: specific domains only              │    │
+│  │    - Development: localhost allowed                 │    │
+│  └─────────────────────────────────────────────────────┘    │
+│                                                              │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Configuration System
+
+Pydantic Settings with environment variable support:
+
+```python
+# Environment variables override config files
+SEMANTIC_KD_ENVIRONMENT=production
+SEMANTIC_KD_SERVICE__PORT=8080
+SEMANTIC_KD_SERVICE__CORS__ALLOW_ORIGINS=["https://myapp.com"]
+SEMANTIC_KD_SERVICE__AUTH__ENABLED=true
+```
+
+Configuration hierarchy:
+1. Environment variables (highest priority)
+2. YAML config file (SEMANTIC_KD_CONFIG_PATH)
+3. Default values (lowest priority)
+
+### Health Checks
+
+```
+GET /health    → Full health status
+GET /ready     → Kubernetes readiness probe
+GET /live      → Kubernetes liveness probe
+```
+
+### Exception Handling
+
+Custom exception hierarchy for better error handling:
+
+```
+SemanticKDError (base)
+├── ModelError
+│   ├── ModelLoadError
+│   ├── ModelNotLoadedError
+│   └── EncodingError
+├── IndexError
+│   ├── IndexNotFoundError
+│   └── IndexNotBuiltError
+├── SearchError
+│   ├── InvalidQueryError
+│   └── SearchTimeoutError
+└── AuthError
+    ├── InvalidAPIKeyError
+    └── RateLimitExceededError
+```
+
+---
+
+## CI/CD Pipeline
+
+```
+┌──────────────┐     ┌──────────────┐     ┌──────────────┐
+│    Commit    │────▶│    CI Jobs   │────▶│   Artifacts  │
+└──────────────┘     └──────────────┘     └──────────────┘
+                            │
+              ┌─────────────┼─────────────┐
+              ▼             ▼             ▼
+        ┌─────────┐   ┌─────────┐   ┌─────────┐
+        │  Lint   │   │  Test   │   │ Security│
+        │ (Ruff)  │   │(pytest) │   │ (bandit)│
+        └─────────┘   └─────────┘   └─────────┘
+              │             │             │
+              └─────────────┼─────────────┘
+                            ▼
+                     ┌─────────────┐
+                     │   Build     │
+                     │  (poetry)   │
+                     └─────────────┘
+                            │
+                            ▼
+                     ┌─────────────┐
+                     │   Docker    │
+                     │   Build     │
+                     └─────────────┘
+```
+
+Jobs run on every push/PR:
+- **Lint**: Ruff linter and formatter
+- **Type Check**: MyPy static analysis
+- **Test**: pytest with coverage (Python 3.10, 3.11)
+- **Security**: bandit code scanner, safety dependency check
+- **Build**: Package build verification
+- **Docker**: Image build (main branch only)
+
+---
+
+## Docker Deployment
+
+Multi-stage build for minimal image size:
+
+```dockerfile
+# Stage 1: Builder (with Poetry)
+FROM python:3.10-slim as builder
+# Install dependencies, copy source
+
+# Stage 2: Runtime (minimal)
+FROM python:3.10-slim as runtime
+# Copy only venv and source
+# Run as non-root user
+```
+
+Docker Compose services:
+- **api**: Main semantic search service
+- **prometheus**: Metrics collection (optional)
+- **grafana**: Visualization dashboard (optional)
+
+---
+
+## Testing Strategy
+
+```
+tests/
+├── conftest.py          # Shared fixtures
+├── test_config.py       # Configuration tests
+├── test_losses.py       # Loss function tests
+├── test_bm25.py         # BM25 index tests
+└── test_api.py          # API endpoint tests
+```
+
+Test categories:
+- **Unit tests**: Individual functions and classes
+- **Integration tests**: API endpoints with mocked models
+- **Numerical stability**: Edge cases for loss functions
+
+Run tests:
+```bash
+poetry run pytest tests/ -v --cov=src
+```
+
+---
+
+## Project Importance
+
+### Why This Project Matters
+
+1. **Solves a Real Problem**: The speed-accuracy tradeoff in semantic search is a fundamental challenge. Cross-encoders are accurate but slow; bi-encoders are fast but less accurate. This project bridges that gap.
+
+2. **Production-Grade Implementation**:
+   - Security: Rate limiting, API authentication, CORS
+   - Observability: Health checks, logging, metrics
+   - Reliability: Proper error handling, input validation
+   - Deployment: Docker, CI/CD, cloud-ready
+
+3. **Novel Technical Approach**:
+   - 3-loss combination (Margin-MSE + Listwise + Contrastive)
+   - Temperature annealing for stable training
+   - 3-stage curriculum mining (BM25 → Teacher → ANCE)
+
+4. **Measurable Results**:
+   - 97% of teacher accuracy (0.88 vs 0.91 nDCG@10)
+   - 17x smaller model (33M vs 560M params)
+   - 100x faster inference (1ms vs 100ms)
+
+5. **Cost Efficient**:
+   - Training: $4 one-time
+   - Serving: ~$40/month for 10K queries/day
+
+### Skills Demonstrated
+
+- **ML/NLP**: Knowledge distillation, embedding models, loss function design
+- **Software Engineering**: Clean architecture, testing, CI/CD
+- **Production Systems**: API design, security, observability
+- **Infrastructure**: Docker, cloud deployment, configuration management

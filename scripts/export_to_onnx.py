@@ -21,7 +21,12 @@ def main():
     args = parser.parse_args()
     
     setup_logging(log_level="INFO")
-    
+
+    # Validate arguments
+    from scripts._validate_args import validate_path_exists, validate_device
+    validate_path_exists(args.model_path, "--model-path")
+    validate_device(args.device)
+
     logger.info("="*80)
     logger.info("ONNX Export & Quantization")
     logger.info("="*80)

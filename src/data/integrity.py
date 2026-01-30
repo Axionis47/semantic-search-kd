@@ -254,7 +254,7 @@ def check_all_datasets() -> Dict[str, Dict]:
 
             all_results[dataset_name] = results
 
-        except Exception as e:
+        except (OSError, KeyError, ValueError) as e:
             logger.error(f"Failed to check {dataset_name}: {e}")
             all_results[dataset_name] = {"error": str(e), "passed": False}
 

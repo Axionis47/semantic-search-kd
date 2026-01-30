@@ -1,4 +1,4 @@
-FROM nvidia/cuda:11.8.0-cudnn8-runtime-ubuntu22.04
+FROM nvidia/cuda:11.8.0-cudnn8-devel-ubuntu22.04
 
 # Set environment variables
 ENV DEBIAN_FRONTEND=noninteractive \
@@ -32,7 +32,7 @@ COPY scripts/ ./scripts/
 COPY configs/ ./configs/
 
 # Install dependencies
-RUN poetry install --no-dev --no-root
+RUN poetry install --only main
 
 # Set entrypoint
 ENTRYPOINT ["poetry", "run", "python", "scripts/train_kd_pipeline.py"]

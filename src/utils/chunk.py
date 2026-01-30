@@ -44,8 +44,10 @@ class TextChunker:
                 - start_char: Start character position
                 - end_char: End character position
         """
-        # Tokenize
-        tokens = self.tokenizer.encode(text, add_special_tokens=False)
+        # Tokenize with offset mapping for accurate character positions
+        encoding = self.tokenizer(text, add_special_tokens=False, return_offsets_mapping=True)
+        tokens = encoding["input_ids"]
+        offset_mapping = encoding["offset_mapping"]  # list of (start_char, end_char) per token
 
         if len(tokens) <= self.max_tokens:
             # No chunking needed
@@ -72,9 +74,9 @@ class TextChunker:
             chunk_tokens = tokens[start_token:end_token]
             chunk_text = self.tokenizer.decode(chunk_tokens, skip_special_tokens=True)
 
-            # Estimate character positions (approximate)
-            start_char = int(start_token / len(tokens) * len(text))
-            end_char = int(end_token / len(tokens) * len(text))
+            # Use offset mapping for accurate character positions
+            start_char = offset_mapping[start_token][0]
+            end_char = offset_mapping[end_token - 1][1]
 
             chunks.append(
                 {

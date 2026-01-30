@@ -1,0 +1,51 @@
+# Git
+.git/
+.github/
+.gitignore
+
+# Model artifacts (downloaded at runtime from GCS)
+artifacts/
+*.safetensors
+*.bin
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.eggs/
+dist/
+build/
+
+# Virtual environments
+.venv/
+venv/
+
+# Tests and docs
+tests/
+docs/
+*.md
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# Development files
+.coverage
+htmlcov/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Notebooks and data
+*.ipynb
+notebooks/
+data/
+*.parquet
+*.csv
+
+# Local configs
+*.local.yaml
+.env
+.env.*

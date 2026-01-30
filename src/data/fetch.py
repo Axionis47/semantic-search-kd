@@ -128,7 +128,7 @@ def fetch_all_datasets(max_msmarco_samples: Optional[int] = None) -> Dict[str, D
                 json.dump(manifest, f, indent=2)
             logger.info(f"Saved manifest to {config['manifest']}")
 
-        except Exception as e:
+        except (OSError, KeyError, ValueError) as e:
             logger.error(f"Failed to fetch {beir_name}: {e}")
             continue
 

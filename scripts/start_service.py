@@ -21,7 +21,13 @@ def main():
     args = parser.parse_args()
     
     setup_logging(log_level="INFO")
-    
+
+    # Validate arguments
+    from scripts._validate_args import validate_path_exists, validate_port, validate_device
+    validate_path_exists(args.model_path, "--model-path")
+    validate_port(args.port)
+    validate_device(args.device)
+
     logger.info("="*80)
     logger.info("Starting Semantic Search Service")
     logger.info("="*80)

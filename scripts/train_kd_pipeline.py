@@ -98,6 +98,18 @@ def main():
     setup_logging(log_level=args.log_level)
     set_seed(args.seed)
 
+    # Validate arguments
+    from scripts._validate_args import validate_positive_int, validate_positive_float, validate_device
+    validate_positive_int(args.max_samples, "--max-samples")
+    validate_positive_int(args.epochs, "--epochs")
+    validate_positive_int(args.batch_size, "--batch-size")
+    validate_positive_float(args.lr, "--lr")
+    if args.stage not in (1, 2, 3):
+        import sys
+        print(f"Error: --stage must be 1, 2, or 3, got {args.stage}", file=sys.stderr)
+        sys.exit(1)
+    validate_device(args.device)
+
     logger.info("=" * 80)
     logger.info("KD TRAINING PIPELINE")
     logger.info("=" * 80)
