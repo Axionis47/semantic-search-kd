@@ -1,187 +1,108 @@
 # Semantic Search with Knowledge Distillation
 
-A small, fast search model trained to match a large, accurate one.
+A production semantic search system that uses knowledge distillation to compress a large, accurate cross-encoder (BAAI/bge-reranker-large, 560M params) into a fast bi-encoder student (intfloat/e5-small-v2, 33M params). The student reaches 97% of teacher accuracy while running 100x faster, making real-time neural search practical without sacrificing relevance.
+
+## Teacher vs Student
 
 |  | Teacher | Student |
 |--|---------|---------|
 | Model | BAAI/bge-reranker-large | intfloat/e5-small-v2 |
-| Params | 560M | 33M |
-| Latency | 100ms | 1ms |
+| Parameters | 560M | 33M |
+| Latency | ~100ms per pair | ~1ms per query |
 | nDCG@10 | 0.91 | 0.88 |
+| Architecture | Cross-encoder (joint) | Bi-encoder (independent) |
+| Use case | Offline scoring, reranking | Real-time search |
 
-The student reaches **97% of teacher accuracy** while being **17x smaller** and **100x faster**.
-
-For technical details, see [ARCHITECTURE.md](ARCHITECTURE.md).
-
----
-
-## Quick Start
-
-### Install
+## Quickstart
 
 ```bash
+# 1. Install
 poetry install  # Python 3.10+
-```
 
-### Train
-
-```bash
-# Local demo (~1 hour)
+# 2. Train (local demo, ~1 hour)
 ./scripts/run_demo_pipeline.sh
-# Output: artifacts/models/kd_student_demo/
 
-# Full training on GCP (~8.5 hours, $4)
-./scripts/setup_gcp.sh
-./scripts/upload_code_to_gcs.sh
-./scripts/run_training_gcp_cpu.sh
-# Output: artifacts/models/kd_student_production/
-```
-
-### Evaluate
-
-```bash
-poetry run python scripts/evaluate_production.py \
-  --model-path=artifacts/models/kd_student_production \
-  --max-samples=200
-```
-
-Output:
-```
-nDCG@10: 0.882
-MRR@10: 0.775
-```
-
-### Run API
-
-```bash
+# 3. Run API
 poetry run python scripts/start_service.py \
-  --model-path=artifacts/models/kd_student_production \
+  --model-path=artifacts/models/kd_student_demo \
   --port=8000
 ```
 
-Test:
+Test it:
 ```bash
 curl -X POST http://localhost:8000/search \
   -H "Content-Type: application/json" \
   -d '{"query": "what is machine learning?", "k": 5}'
 ```
 
-Response:
-```json
-{
-  "query": "what is machine learning?",
-  "results": [{"doc_id": "doc_123", "text": "Machine learning is...", "score": 0.95, "rank": 1}],
-  "total_results": 5,
-  "reranked": false,
-  "latency_ms": 12.5
-}
-```
+## Documentation
 
----
+### Overview
 
-## How Training Works
+| Document | Description |
+|----------|-------------|
+| [Problem and Approach](docs/overview/problem-and-approach.md) | Why knowledge distillation, why these models, why this design |
+| [Results and Benchmarks](docs/overview/results-and-benchmarks.md) | Training metrics, evaluation results, latency, costs |
 
-1. **Get data** - Download MS MARCO (603 queries, 10K documents)
-2. **Find hard negatives** - Documents that look relevant but aren't (using BM25 + teacher)
-3. **Teacher scores pairs** - Score each (query, document) pair
-4. **Student learns scores** - Train student to predict teacher's scores
-5. **Export model** - Save to `artifacts/models/`
+### Architecture (C4 Diagrams)
 
-**Loss breakdown:**
-| Loss | Weight | Purpose |
-|------|--------|---------|
-| Margin-MSE | 60% | Learn score differences between docs |
-| Listwise | 20% | Learn ranking order |
-| Contrastive | 20% | Learn query-doc similarity |
+| Document | Description |
+|----------|-------------|
+| [C4 Context](docs/architecture/c4-context.md) | Level 1: System context with actors and external systems |
+| [C4 Containers](docs/architecture/c4-container.md) | Level 2: Training pipeline, index builder, API service |
+| [C4 Training Components](docs/architecture/c4-component-training.md) | Level 3: Data, mining, KD trainer internals |
+| [C4 Serving Components](docs/architecture/c4-component-serving.md) | Level 3: Middleware stack, search flow, endpoints |
+| [C4 Loss Functions](docs/architecture/c4-code-losses.md) | Level 4: Loss math, code, temperature annealing |
 
-See [ARCHITECTURE.md](ARCHITECTURE.md#loss-functions) for loss function details.
+### Decisions (ADRs)
 
----
+| Document | Description |
+|----------|-------------|
+| [ADR-001: Student Model](docs/decisions/adr-001-student-model-choice.md) | Why intfloat/e5-small-v2 |
+| [ADR-002: Teacher Model](docs/decisions/adr-002-teacher-model-choice.md) | Why BAAI/bge-reranker-large |
+| [ADR-003: Mining Curriculum](docs/decisions/adr-003-three-stage-mining.md) | Why 3-stage BM25, teacher, ANCE |
+| [ADR-004: Multi-Loss](docs/decisions/adr-004-multi-loss-combination.md) | Why 60/20/20 Margin-MSE, Listwise, Contrastive |
+| [ADR-005: Temperature](docs/decisions/adr-005-temperature-annealing.md) | Why linear annealing from 4.0 to 2.0 |
+| [ADR-006: FAISS HNSW](docs/decisions/adr-006-faiss-hnsw-over-ivfpq.md) | Why HNSW over IVF-PQ |
+| [ADR-007: PyTorch Serving](docs/decisions/adr-007-pytorch-over-onnx-serving.md) | Why native PyTorch over ONNX |
+| [ADR-008: Rate Limiting](docs/decisions/adr-008-token-bucket-rate-limiting.md) | Why in-process token bucket |
 
-## How Inference Works
+### Guides
 
-```
-Query → Encode (1ms) → FAISS search (10ms) → Top-K results
-```
+| Document | Description |
+|----------|-------------|
+| [Quickstart](docs/guides/quickstart.md) | 5-minute local demo |
+| [Training Guide](docs/guides/training-guide.md) | Full training walkthrough (local + GCP) |
+| [Deployment Guide](docs/guides/deployment-guide.md) | Docker through Cloud Run |
+| [Hyperparameter Tuning](docs/guides/hyperparameter-tuning.md) | What to tune, in what order |
+| [Custom Datasets](docs/guides/custom-dataset-guide.md) | Bring your own data |
 
-**Optional reranking:** Pass top-K through teacher for higher accuracy (+100ms latency). Use when accuracy matters more than speed.
+### Reference
 
-See [ARCHITECTURE.md](ARCHITECTURE.md#inference-architecture) for details.
+| Document | Description |
+|----------|-------------|
+| [API Reference](docs/reference/api-reference.md) | Endpoints, schemas, error codes |
+| [Configuration Reference](docs/reference/configuration-reference.md) | Every config knob |
+| [CLI and Makefile](docs/reference/cli-and-makefile.md) | Make targets and scripts |
+| [Environment Variables](docs/reference/environment-variables.md) | All SEMANTIC_KD_ variables |
 
----
+### Operations
 
-## Project Structure
-
-```
-src/
-├── data/       # MS MARCO fetching, chunking
-├── models/     # Teacher & student wrappers
-├── kd/         # Loss functions, training loop
-├── mining/     # Hard negative mining
-├── index/      # FAISS index building
-└── serve/      # FastAPI service
-
-scripts/
-├── train_kd_pipeline.py    # Main training
-├── evaluate_production.py  # Evaluation
-├── start_service.py        # API server
-└── run_training_gcp_cpu.sh # GCP training
-
-configs/
-├── kd.yaml       # Training hyperparameters
-├── index.yaml    # FAISS settings
-└── service.yaml  # API settings
-```
-
----
-
-## Results
-
-Evaluated on 200 MS MARCO queries (same distribution as training).
-
-| Metric | Untrained | After KD | Teacher | Gap |
-|--------|-----------|----------|---------|-----|
-| nDCG@10 | 0.719 | 0.882 | 0.91 | 3% |
-| MRR@10 | 0.632 | 0.775 | 0.80 | 3% |
-
-See [ARCHITECTURE.md](ARCHITECTURE.md#results) for training curves.
-
----
-
-## Cost
-
-| Item | Cost | Notes |
-|------|------|-------|
-| Training | $4 | One-time, 8.5 hours on GCP CPU |
-| Storage | $1/month | Model + index files |
-| Cloud Run | $40/month | ~10K queries/day |
-
----
+| Document | Description |
+|----------|-------------|
+| [Runbook](docs/operations/runbook.md) | Symptom-based troubleshooting |
+| [Monitoring and Alerting](docs/operations/monitoring-and-alerting.md) | Prometheus, Grafana, alert thresholds |
+| [Scaling and Performance](docs/operations/scaling-and-performance.md) | FAISS tuning, Cloud Run scaling |
 
 ## Tech Stack
 
-- **ML:** PyTorch, Sentence-Transformers
-- **Search:** FAISS (HNSW), BM25
-- **API:** FastAPI
-- **Cloud:** GCP (Compute, Storage, Cloud Run)
-- **Package:** Poetry
+PyTorch, Sentence-Transformers, FAISS (HNSW), FastAPI, GCP (Compute Engine, Cloud Storage, Cloud Run), Poetry, Docker
 
----
-
-## Development
+## Dev Commands
 
 ```bash
-poetry run pytest tests/ -v      # Run tests
-poetry run ruff format .         # Format code
-poetry run ruff check . --fix    # Lint
-poetry run mypy src/             # Type check
+poetry run pytest tests/ -v          # tests
+poetry run ruff format .             # format
+poetry run ruff check . --fix        # lint
+poetry run mypy src/                 # type check
 ```
-
----
-
-## Credits
-
-- MS MARCO dataset - Microsoft
-- BGE Reranker - BAAI
-- E5 Embeddings - Microsoft
-- FAISS - Meta
